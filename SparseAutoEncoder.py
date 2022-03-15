@@ -14,7 +14,6 @@ class SparseAutoEncoder(nn.Module):
         encoded = F.sigmod(self.encoder(input))
         decoded = F.sigmod(self.decoder(encoded))
         return encoded, decoded
-    RHO = 0.01
 
 
 def kl_divergence(p, q):
