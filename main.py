@@ -8,7 +8,7 @@ import os
 import warnings
 from BiLSTM import BidirectionalLSTM
 from sklearn.model_selection import train_test_split
-
+from DoubleEnsemble import DoubleEnsembleModel
 
 def get_device():
     if torch.cuda.is_available():
@@ -18,12 +18,11 @@ def get_device():
     return device
 
 
-def preprocess(X, Y):
-    x_train, x_valid, y_train, y_valid = train_test_split(X, Y, test_size=0.5)
-    x_train = torch.from_numpy(x_train)
-    x_valid = torch.from_numpy(x_valid)
-    y_train = torch.from_numpy(y_train)
-    y_valid = torch.from_numpy(y_valid)
+def preprocess(X_train, Y_train, X_valid, Y_valid):
+    x_train = torch.from_numpy(X_train)
+    x_valid = torch.from_numpy(X_valid)
+    y_train = torch.from_numpy(Y_train)
+    y_valid = torch.from_numpy(Y_valid)
     train_ds = TensorDataset(x_train, y_train)
     valid_ds = TensorDataset(x_valid, y_valid)
 
@@ -46,8 +45,11 @@ def bacc(model, x, y):
         predicted = torch.argmax(outputs)
         prediction.append(predicted)
     prediction = np.array(prediction)
-    return (np.mean(prediction[np.where(y == 0)] == y[np.where(y == 0)]) +
+    bac = (np.mean(prediction[np.where(y == 0)] == y[np.where(y == 0)]) +
             np.mean(prediction[np.where(y == 1)] == y[np.where(y == 1)])) / 2
+
+    acc = ((prediction == y).sum()/prediction.shape[0])
+    return bac, acc
 
 
 def loss_batch(model, loss_func, xb, yb, opt=None):
@@ -76,7 +78,7 @@ def train(epochs, model, loss_func, train_dl, valid_dl):
 
         val_loss = np.sum(np.multiply(losses, nums)) / np.sum(nums)
 
-        print(epoch, val_loss)
+        # print(epoch, val_loss)
 
 
 DATA_PATH = 'data_set/'
@@ -96,10 +98,24 @@ for data_name in os.listdir(DATA_PATH):
     for number, label in enumerate(list(set(labels))):
         labels[np.where(labels == label)] = number
     labels = labels.astype('float')
+
     row_num, col_num = np.array(features).shape
     model = BidirectionalLSTM(col_num, hidden_dim, len(set(labels)))
-    x_train, x_test, y_train, y_test = train_test_split(features, labels, test_size=0.5)
-    train_ds, valid_ds = preprocess(x_train, y_train)
+    x_train, x_test, y_train, y_test = train_test_split(features, labels, test_size=0.25)
+    x_train, x_valid, y_train, y_valid = train_test_split(x_train, y_train, test_size=0.25)
+    train_ds, valid_ds = preprocess(x_train, y_train, x_valid, y_valid)
     train_dl, valid_dl = get_data(train_ds, valid_ds, batch_size)
+
     train(epoch, model, loss_func, train_dl, valid_dl)
-    print(bacc(model, x_test, y_test))
+    print("Basic model on " + data_name + ": " + str(bacc(model, x_test, y_test)[1]))
+    #
+    x_train, x_test, y_train, y_test = train_test_split(features, labels, test_size=0.25)
+    model = DoubleEnsembleModel(out_dim=len(set(labels)), epochs=epoch)
+    model.fit(x_train, y_train, x_valid, y_valid)
+    with torch.no_grad():
+        pre = model.predict(x_test)
+    pre = pd.DataFrame(pre).mode(axis=0)
+    acc = ((pre == y_test).sum(1)/pre.shape[1]).values[0]
+    print("DEnsemble model on " + data_name + ": " + str(acc))
+
+
